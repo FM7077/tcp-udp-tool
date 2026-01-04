@@ -10,6 +10,7 @@ using TcpUdpTool.ViewModel.Item;
 using TcpUdpTool.ViewModel.Base;
 using static TcpUdpTool.Model.UdpClientServerStatusEventArgs;
 using System.Windows;
+using System.Timers;
 
 namespace TcpUdpTool.ViewModel
 {
@@ -19,6 +20,8 @@ namespace TcpUdpTool.ViewModel
         #region private members
 
         private UdpClientServer _udpClientServer;
+
+        private Timer _loopTimer = null;
 
         #endregion
 
@@ -134,6 +137,8 @@ namespace TcpUdpTool.ViewModel
             LocalInterfaces = new ObservableCollection<InterfaceAddress>();
 
             _sendViewModel.SendData += OnSend;
+            _sendViewModel.LoopSendData += OnLoopSend;
+            _sendViewModel.StopLoopSendData += OnStopLoopSend;
             _udpClientServer.StatusChanged +=
                 (sender, arg) =>
                 {
@@ -145,6 +150,7 @@ namespace TcpUdpTool.ViewModel
                     }
                     else
                     {
+                        DisposeTimer();
                         History.Header = "Conversation";
                     }
                 };
@@ -197,6 +203,7 @@ namespace TcpUdpTool.ViewModel
 
         private void Stop()
         {
+            DisposeTimer();
             _udpClientServer.Stop();
         }
 
@@ -207,6 +214,7 @@ namespace TcpUdpTool.ViewModel
 
             try
             {
+                DisposeTimer();
                 var msg = new Transmission(data, Transmission.EType.Sent);
                 History.Append(msg);
                 var res = await _udpClientServer.SendAsync(Send.IpAddress, Send.Port.Value, msg);
@@ -222,6 +230,44 @@ namespace TcpUdpTool.ViewModel
                 Console.Write(ex.StackTrace);
                 DialogUtils.ShowErrorDialog(ex.Message);
             }
+        }
+
+        private async void OnLoopSend(byte[] data, int integer)
+        {
+            if (!ValidateSend())
+                return;
+
+            try
+            {
+                DisposeTimer();
+                _loopTimer = new Timer();
+                _loopTimer.Interval = TimeSpan.FromSeconds(integer).TotalMilliseconds;
+
+                _loopTimer.Elapsed += async (object sender, ElapsedEventArgs e) =>
+                {
+                    _loopTimer.Stop();
+                    var msg = new Transmission(data, Transmission.EType.Sent);
+                    History.Append(msg);
+                    var res = await _udpClientServer.SendAsync(Send.IpAddress, Send.Port.Value, msg);
+                    if (res != null)
+                    {
+                        msg.Origin = res.From;
+                        msg.Destination = res.To;
+                    }
+                    _loopTimer.Start();
+                };
+                _loopTimer.Start();
+            }
+            catch (Exception ex)
+            {
+                Console.Write(ex.StackTrace);
+                DialogUtils.ShowErrorDialog(ex.Message);
+            }
+        }
+
+        private void OnStopLoopSend()
+        {
+            DisposeTimer();
         }
 
         private bool ValidateStart()
@@ -290,10 +336,16 @@ namespace TcpUdpTool.ViewModel
 
         public void Dispose()
         {
+            DisposeTimer();
             _udpClientServer?.Dispose();
             _historyViewModel?.Dispose();
         }
 
+        private void DisposeTimer()
+        {
+            _loopTimer?.Stop();
+            _loopTimer?.Dispose();
+        }
         #endregion
 
     }

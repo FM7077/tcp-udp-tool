@@ -10,6 +10,7 @@ using TcpUdpTool.ViewModel.Item;
 using TcpUdpTool.ViewModel.Base;
 using System.Windows;
 using System.Collections.Generic;
+using System.Timers;
 
 namespace TcpUdpTool.ViewModel
 {
@@ -19,6 +20,8 @@ namespace TcpUdpTool.ViewModel
         #region private members
 
         private TcpServer _tcpServer;
+
+        private Timer _loopTimer = null;
 
         #endregion
 
@@ -148,6 +151,8 @@ namespace TcpUdpTool.ViewModel
             LocalInterfaces = new ObservableCollection<InterfaceAddress>();
 
             _sendViewModel.SendData += OnSend;
+            _sendViewModel.LoopSendData += OnLoopSend;
+            _sendViewModel.StopLoopSendData += OnStopLoopSend;
             _tcpServer.StatusChanged +=
                 (sender, arg) =>
                 {
@@ -235,6 +240,7 @@ namespace TcpUdpTool.ViewModel
 
         private void Stop()
         {
+            DisposeTimer();
             _tcpServer.Stop();
         }
 
@@ -242,6 +248,7 @@ namespace TcpUdpTool.ViewModel
         {
             try
             {
+                DisposeTimer();
                 Transmission msg = new Transmission(data, Transmission.EType.Sent);
                 List<TransmissionResult> res = await _tcpServer.SendAsync(msg);
                 if (res != null)
@@ -262,8 +269,53 @@ namespace TcpUdpTool.ViewModel
             }
         }
 
+        private async void OnLoopSend(byte[] data, int integer)
+        {
+            try
+            {
+                DisposeTimer();
+                _loopTimer = new Timer();
+                _loopTimer.Interval = TimeSpan.FromSeconds(integer).TotalMilliseconds;
+
+                _loopTimer.Elapsed += async (object sender, ElapsedEventArgs e) =>
+                {
+                    _loopTimer?.Stop();
+
+                    Transmission msg = new Transmission(data, Transmission.EType.Sent);
+                    List<TransmissionResult> res = await _tcpServer.SendAsync(msg);
+                    if (res != null)
+                    {
+                        foreach (var sendResult in res)
+                        {
+                            Transmission entry = new Transmission(data, Transmission.EType.Sent);
+                            msg.Origin = sendResult.From;
+                            msg.Destination = sendResult.To;
+                            History.Append(msg);
+                        }
+                    }
+
+                    _loopTimer.Start();
+                };
+
+                _loopTimer.Start();
+            }
+            catch (Exception ex)
+            {
+                _loopTimer?.Stop();
+                _loopTimer?.Dispose();
+                Send.Message = "";
+                DialogUtils.ShowErrorDialog(ex.Message);
+            }
+        }
+
+        private void OnStopLoopSend()
+        {
+            DisposeTimer();
+        }
+
         private void Disconnect()
         {
+            DisposeTimer();
             _tcpServer.Disconnect();
         }
 
@@ -317,8 +369,15 @@ namespace TcpUdpTool.ViewModel
 
         public void Dispose()
         {
+            DisposeTimer();
             _tcpServer?.Dispose();
             _historyViewModel?.Dispose();
+        }
+
+        private void DisposeTimer()
+        {
+            _loopTimer?.Stop();
+            _loopTimer?.Dispose();
         }
 
         #endregion

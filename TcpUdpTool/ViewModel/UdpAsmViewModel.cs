@@ -9,6 +9,7 @@ using TcpUdpTool.Model.Util;
 using TcpUdpTool.ViewModel.Item;
 using TcpUdpTool.ViewModel.Base;
 using System.Windows;
+using System.Timers;
 
 namespace TcpUdpTool.ViewModel
 {
@@ -18,6 +19,8 @@ namespace TcpUdpTool.ViewModel
         #region private members
 
         private UdpMulticastClient _udpClient;
+
+        private Timer _loopTimer = null;
 
         #endregion
 
@@ -171,6 +174,8 @@ namespace TcpUdpTool.ViewModel
             LocalInterfaces = new ObservableCollection<InterfaceAddress>();
 
             _sendViewModel.SendData += OnSend;
+            _sendViewModel.LoopSendData += OnLoopSend;
+            _sendViewModel.StopLoopSendData += OnStopLoopSend;
             _udpClient.Received +=
                 (sender, arg) =>
                 {
@@ -188,6 +193,7 @@ namespace TcpUdpTool.ViewModel
                     }
                     else
                     {
+                        DisposeTimer();
                         _historyViewModel.Header = "Conversation";
                     }
                 };
@@ -239,6 +245,7 @@ namespace TcpUdpTool.ViewModel
 
         private void Leave()
         {
+            DisposeTimer();
             _udpClient.Leave();
         }
 
@@ -267,6 +274,49 @@ namespace TcpUdpTool.ViewModel
             {
                 DialogUtils.ShowErrorDialog(ex.Message);
             }
+        }
+
+        private async void OnLoopSend(byte[] data, int integer)
+        {
+            if (!ValidateSend())
+                return;
+
+            try
+            {
+                DisposeTimer();
+                _loopTimer = new Timer();
+                _loopTimer.Interval = TimeSpan.FromSeconds(integer).TotalMilliseconds;
+
+                _loopTimer.Elapsed += async (object sender, ElapsedEventArgs e) =>
+                {
+                    _loopTimer.Stop();
+                    var msg = new Transmission(data, Transmission.EType.Sent);
+                    History.Append(msg);
+                    var res = await _udpClient.SendAsync(
+                        msg, IPAddress.Parse(Send.MulticastGroup),
+                        Send.Port.Value, ToEMulticastInterface(Send.SelectedInterface.Type),
+                        Send.SelectedInterface.Address, Send.MulticastTtl);
+
+                    if (res != null)
+                    {
+                        msg.Origin = res.From;
+                        msg.Destination = res.To;
+                        Send.Message = "";
+                    }
+                    _loopTimer.Start();
+                };
+                _loopTimer.Start();
+            }
+            catch (Exception ex)
+            {
+                DisposeTimer();
+                DialogUtils.ShowErrorDialog(ex.Message);
+            }
+        }
+
+        private void OnStopLoopSend()
+        {
+            DisposeTimer();
         }
 
         private bool ValidateJoin()
@@ -356,10 +406,16 @@ namespace TcpUdpTool.ViewModel
 
         public void Dispose()
         {
+            DisposeTimer();
             _udpClient?.Dispose();
             _historyViewModel?.Dispose();
         }
 
+        private void DisposeTimer()
+        {
+            _loopTimer?.Stop();
+            _loopTimer?.Dispose();
+        }
         #endregion
 
     }

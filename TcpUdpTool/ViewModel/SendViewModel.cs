@@ -8,6 +8,8 @@ using TcpUdpTool.Model.Parser;
 using TcpUdpTool.Model.Util;
 using TcpUdpTool.ViewModel.Item;
 using TcpUdpTool.ViewModel.Base;
+using System.Threading.Tasks;
+using System.Threading;
 
 namespace TcpUdpTool.ViewModel
 {
@@ -178,6 +180,20 @@ namespace TcpUdpTool.ViewModel
             }
         }
 
+        private string _interval;
+        public string Interval
+        {
+            get { return _interval; }
+            set
+            {
+                if( _interval != value)
+                {
+                    _interval = value;
+                    OnPropertyChanged(nameof(Interval));
+                }
+            }
+        }
+
         private bool _plainTextSelected;
         public bool PlainTextSelected
         {
@@ -232,6 +248,10 @@ namespace TcpUdpTool.ViewModel
 
         public event Action<byte[]> SendData;
 
+        public event Action<byte[], int> LoopSendData;
+
+        public event Action StopLoopSendData;
+
         #endregion
 
         #region public commands
@@ -249,6 +269,16 @@ namespace TcpUdpTool.ViewModel
         public ICommand SendCommand
         {
             get { return new DelegateCommand(Send); }
+        }
+
+        public ICommand LoopSendCommand
+        {
+            get { return new DelegateCommand(LoopSend); }
+        }
+
+        public ICommand StopLoopSendCommand
+        {
+            get { return new DelegateCommand(StopLoopSend); }
         }
 
         #endregion
@@ -324,6 +354,18 @@ namespace TcpUdpTool.ViewModel
                 {
                     data = _parser.Parse(Message, SettingsUtils.GetEncoding());
                     SendData?.Invoke(data);
+                    if(Message == "#011000")
+                    {
+                        data = _parser.Parse("#011101", SettingsUtils.GetEncoding());
+                        SendData?.Invoke(data);
+                        // 等待几秒后下发复位
+                        Task.Run(() =>
+                        {
+                            Thread.Sleep(5000);
+                            data = _parser.Parse("#011100", SettingsUtils.GetEncoding());
+                            SendData?.Invoke(data);
+                        });
+                    }
                 }
                 catch (FormatException ex)
                 {
@@ -331,6 +373,60 @@ namespace TcpUdpTool.ViewModel
                     return;
                 }
             }
+        }
+
+
+        private void LoopSend()
+        {
+            if (FileSelected)
+            {
+                var filePath = Message;
+
+                if (!File.Exists(filePath))
+                {
+                    DialogUtils.ShowErrorDialog("The file does not exist.");
+                    return;
+                }
+
+                if (new FileInfo(filePath).Length > 4096)
+                {
+                    DialogUtils.ShowErrorDialog("The file is to large to send, maximum size is 16 KB.");
+                    return;
+                }
+
+                try
+                {
+                    byte[] file = File.ReadAllBytes(filePath);
+                    LoopSendData?.Invoke(file, 1);
+                }
+                catch (Exception ex)
+                {
+                    DialogUtils.ShowErrorDialog("Error while reading file. " + ex.Message);
+                    return;
+                }
+            }
+            else
+            {
+                byte[] data = new byte[0];
+                try
+                {
+                    data = _parser.Parse(Message, SettingsUtils.GetEncoding());
+                    int.TryParse(Interval, out var interval);
+                    interval = Math.Max(1, interval);
+                    Interval = interval.ToString();
+                    LoopSendData?.Invoke(data, interval);
+                }
+                catch (FormatException ex)
+                {
+                    DialogUtils.ShowErrorDialog(ex.Message);
+                    return;
+                }
+            }
+        }
+
+        private void StopLoopSend()
+        {
+            StopLoopSendData.Invoke();
         }
 
         #endregion

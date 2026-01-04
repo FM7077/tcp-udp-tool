@@ -4,6 +4,7 @@ using TcpUdpTool.Model;
 using TcpUdpTool.Model.Data;
 using TcpUdpTool.Model.Util;
 using TcpUdpTool.ViewModel.Base;
+using System.Timers;
 
 namespace TcpUdpTool.ViewModel
 {
@@ -13,7 +14,9 @@ namespace TcpUdpTool.ViewModel
         #region private Members
 
         private TcpClient _tcpClient;
-     
+
+        private Timer _loopTimer = null;
+
         #endregion
 
         #region public Properties
@@ -132,6 +135,8 @@ namespace TcpUdpTool.ViewModel
             _tcpClient = new TcpClient();
 
             _sendViewModel.SendData += OnSend;
+            _sendViewModel.LoopSendData += OnLoopSend;
+            _sendViewModel.StopLoopSendData += OnStopLoopSend;
             _tcpClient.StatusChanged += 
                 (sender, arg) => 
                 {
@@ -144,6 +149,7 @@ namespace TcpUdpTool.ViewModel
                     }
                     else
                     {
+                        DisposeTimer();
                         History.Header = "Conversation";
                     }
                   
@@ -182,6 +188,7 @@ namespace TcpUdpTool.ViewModel
 
         private void Disconnect()
         {
+            DisposeTimer();
             _tcpClient.Disconnect();
         }
 
@@ -189,6 +196,7 @@ namespace TcpUdpTool.ViewModel
         {
             try
             {
+                DisposeTimer();
                 Transmission msg = new Transmission(data, Transmission.EType.Sent);
                 History.Append(msg);
                 TransmissionResult res = await _tcpClient.SendAsync(msg);
@@ -203,6 +211,41 @@ namespace TcpUdpTool.ViewModel
             {
                 DialogUtils.ShowErrorDialog(ex.Message);
             }
+        }
+
+        private async void OnLoopSend(byte[] data, int integer)
+        {
+            try
+            {
+                DisposeTimer();
+                _loopTimer = new Timer();
+                _loopTimer.Interval = TimeSpan.FromSeconds(integer).TotalMilliseconds;
+
+                _loopTimer.Elapsed += async (object sender, ElapsedEventArgs e) =>
+                {
+                    _loopTimer?.Stop();
+
+                    Transmission msg = new Transmission(data, Transmission.EType.Sent);
+                    History.Append(msg);
+                    TransmissionResult res = await _tcpClient.SendAsync(msg);
+                    if (res != null)
+                    {
+                        msg.Origin = res.From;
+                        msg.Destination = res.To;
+                    }
+                    _loopTimer.Start();
+                };
+                _loopTimer.Start();
+            }
+            catch (Exception ex)
+            {
+                DialogUtils.ShowErrorDialog(ex.Message);
+            }
+        }
+
+        private void OnStopLoopSend()
+        {
+            DisposeTimer();
         }
 
         private bool ValidateConnect()
@@ -224,10 +267,16 @@ namespace TcpUdpTool.ViewModel
 
         public void Dispose()
         {
+            DisposeTimer();
             _tcpClient?.Dispose();
             _historyViewModel?.Dispose();
         }
 
+        private void DisposeTimer()
+        {
+            _loopTimer?.Stop();
+            _loopTimer?.Dispose();
+        }
         #endregion
 
     }
